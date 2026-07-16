@@ -1,1 +1,742 @@
-cODE Stuff
+--Connected Via Github
+--I apologize for all indentation of variables and functions, they make the code easier for me to handle and read
+--Start Variables
+local Boss = script.Parent
+local Humanoid = Boss.Humanoid
+local Root = Boss.HumanoidRootPart
+local animator = Humanoid.Animator
+
+local Debris = game:GetService("Debris")
+
+local currtime
+
+local Combo = 0
+local MaxCombo = 4
+
+local PrevTime = 0
+local Animation = 0
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local RS = game:GetService("ReplicatedStorage")
+
+local Animations = script:WaitForChild("Animations")
+
+
+
+local CombatService =
+	require(game.ReplicatedStorage.Modules.CombatService)
+local KnockbackModule = require(RS:FindFirstChild('Module'):FindFirstChild('RagdollKnockbackModule'))
+local DamageIndicator = require(RS:FindFirstChild('Modules'):FindFirstChild('DamageIndicatorModule'))
+local StunModule = require(RS:FindFirstChild('Modules'):FindFirstChild('StunModule'))
+
+local IdleTrack = Humanoid.Animator:LoadAnimation(Animations.Idle)
+local WalkTrack = Humanoid.Animator:LoadAnimation(Animations.Walk)
+local DashTrack = Humanoid.Animator:LoadAnimation(Animations.DashSlash)
+local SpinTrack = Humanoid.Animator:LoadAnimation(Animations.SpinningSlash)
+local SlamTrack = Humanoid.Animator:LoadAnimation(Animations.ShadowSlam)
+
+local AnimationTable = {"1","2","3","4"}
+
+local M1Cooldown = .15
+local M1OnCD = false
+local Animation = 0
+
+local BossVFX = RS:WaitForChild('BossVFX'):FindFirstChild('Igris')
+local BossSFX = RS:WaitForChild('BossVFX'):FindFirstChild('SFX')
+
+local AirCombo = 0
+local MaxAirCombo = 4
+
+local AGGRO_RADIUS = 150
+local Aggroed = false
+
+local LoadedTracks = {} 
+
+print("Boss:", Boss)
+print("Boss HRP:", Boss and Boss:FindFirstChild("HumanoidRootPart"))
+--load tracks
+for index, animName in ipairs(AnimationTable) do
+	local animObject = Animations:FindFirstChild(animName)
+	if animObject then
+		local track = animator:LoadAnimation(animObject)
+
+		
+		track.Priority = Enum.AnimationPriority.Action 
+
+		LoadedTracks[index] = track
+	else
+		warn("Could not find animation in ReplicatedStorage: " .. animName)
+	end
+end
+local DashSlashCooldown = 5
+local SpinSlashCooldown = 5
+local ShadowSlamCooldown = 10
+local DashSlashOnCD = false
+local SpinSlashOnCD = false
+local ShadowSlamOnCD = false
+IdleTrack:Play()
+local Attacking = false
+local LastTeleport = 0
+--track closest player
+local function GetClosestPlayer()
+	local ClosestPlayer
+	local ClosestDistance = math.huge
+	for _, Player in ipairs(Players:GetPlayers()) do
+	local Character = Player.Character
+		if Character then
+			local Humanoid = Character:FindFirstChild("Humanoid")
+			local Root = Character:FindFirstChild("HumanoidRootPart")
+			if Humanoid and Root and Humanoid.Health > 0 then
+				local Distance =
+					(Root.Position - Boss.HumanoidRootPart.Position).Magnitude
+
+				if Distance < ClosestDistance then
+					ClosestDistance = Distance
+					ClosestPlayer = Character
+				end
+
+			end
+
+		end
+
+	end
+
+	if ClosestDistance <= AGGRO_RADIUS then
+		return ClosestPlayer, ClosestDistance
+	end
+
+	return nil, ClosestDistance
+
+end
+--damae players function used for all damage
+local function DamagePlayers(Size, Offset, Damage)
+
+	local OverlapParams = OverlapParams.new()
+	OverlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	OverlapParams.FilterDescendantsInstances = {Boss}
+
+	local Parts = workspace:GetPartBoundsInBox(
+		Root.CFrame * Offset,
+		Size,
+		OverlapParams
+	)
+
+	local HitCharacters = {}
+
+	for _, Part in ipairs(Parts) do
+
+		local Character = Part:FindFirstAncestorOfClass("Model")
+
+		if Character
+			and not HitCharacters[Character]
+			and Players:GetPlayerFromCharacter(Character) then
+
+			HitCharacters[Character] = true
+
+			local Result = CombatService.Hit(
+				Boss,
+				Character,
+				Damage,
+				{
+					BlockDamage = Damage,
+					CanBlockBreak = true
+				}
+			)
+
+			if Result == "Hit" then
+
+				DamageIndicator.ShowDamage(Character, Damage)
+				StunModule.Stun(Character,.45)
+
+			elseif Result == "BlockBroken" then
+
+				DamageIndicator.ShowDamage(Character, Damage)
+				StunModule.Stun(Character,.45)
+
+			end
+
+		end
+
+	end
+
+end
+--so the player cant get behind the boss
+local function FaceTarget(Target, TurnSpeed)
+
+	if not Target
+		or not Target:FindFirstChild("HumanoidRootPart") then
+		return
+	end
+
+	TurnSpeed = TurnSpeed or 0.25
+
+	local Goal = CFrame.lookAt(
+		Root.Position,
+		Vector3.new(
+			Target.HumanoidRootPart.Position.X,
+			Root.Position.Y,
+			Target.HumanoidRootPart.Position.Z
+		)
+	)
+
+	Root.CFrame = Root.CFrame:Lerp(Goal, TurnSpeed)
+end
+
+--1st skill
+local function DashSlash(Target)
+
+	Attacking = true
+	DashSlashOnCD = true
+
+	CombatService.EnableHyperArmor(
+		Boss,
+		1.5
+	)
+
+	DashTrack:Play()
+
+	task.wait(.3)
+
+	local Goal =
+		Target.HumanoidRootPart.Position 
+--tween to target location
+	local Tween =
+		TweenService:Create(
+			Root,
+			TweenInfo.new(.4),
+			{
+				CFrame = CFrame.new(Goal)
+			}
+		)
+
+	Tween:Play()
+	
+	Tween.Completed:Wait()
+
+	DamagePlayers(
+		Vector3.new(8,6,10),
+		CFrame.new(0,0,-4),
+		15
+	)
+
+	task.wait(1)
+	--debounce
+
+	Attacking = false
+	task.delay(DashSlashCooldown,function()
+		DashSlashOnCD = false
+	end)
+
+end
+
+--second move
+local function SpinningSlash(Target)
+-- forgot to describe the hyperarmour in the last one
+	Attacking = true
+	SpinSlashOnCD = true
+
+	CombatService.EnableHyperArmor(
+		Boss,
+		3
+	)
+
+	SpinTrack:Play()
+
+	for i = 1,4 do
+
+		DamagePlayers(
+			Vector3.new(10,6,10),
+			CFrame.new(),
+			5
+		)
+
+		task.wait(.08)
+
+	end
+
+	task.wait(.2)
+
+	Attacking = false
+	task.delay(SpinSlashCooldown,function()
+		SpinSlashOnCD = false
+	end)
+
+end
+
+--third move
+local function ShadowSlamvVFX()
+	--spawn vfx
+	local Shockwave = BossVFX:FindFirstChild('ShadowSlam'):Clone()
+	local Smash = BossVFX:FindFirstChild('Smash'):Clone()
+	local Db = BossVFX:FindFirstChild('Debris'):Clone()
+	local SmashSFX = BossVFX.Parent.SFX:FindFirstChild('Smash'):Clone()
+	Shockwave.Parent = workspace.FX
+	Shockwave:PivotTo(Boss.HumanoidRootPart.CFrame)
+	Smash.Parent = workspace.FX
+	Smash:PivotTo(Boss.HumanoidRootPart.CFrame)
+	for i, VFX in ipairs(Shockwave:GetChildren()) do
+	local ShockwaveTween = TweenService:Create(VFX,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.Out),{Size = Vector3.new(50,20,50)})
+	local TransparencyTween = TweenService:Create(VFX,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.Out),{Transparency = 1})
+	ShockwaveTween:Play()
+	TransparencyTween:Play()
+	end
+	local SmashTween = TweenService:Create(Smash.Base,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.Out),{Size = Vector3.new(50,7,50)})
+	SmashTween:Play()
+	for i, v in pairs(Smash.Base:GetChildren()) do
+		local TransparencyTween = TweenService:Create(v,TweenInfo.new(1.5,Enum.EasingStyle.Sine,Enum.EasingDirection.Out),{Transparency = 1})
+		TransparencyTween:Play()
+	end
+	
+	Db.Parent = workspace.FX
+	Db.CFrame = Boss.HumanoidRootPart.CFrame
+	SmashSFX.Parent = Boss.HumanoidRootPart
+	SmashSFX:Play()
+	Debris:AddItem(SmashSFX,4)
+	Debris:AddItem(Shockwave,4)
+	Debris:AddItem(Smash,4)
+	Debris:AddItem(Db,4)
+end
+
+local function ShadowSlam(Target)
+
+	Attacking = true
+	ShadowSlamOnCD = true
+	M1OnCD = true
+
+	CombatService.EnableIFrames(
+		Boss,
+		3
+	)
+
+	SlamTrack:Play()
+--using an animation marker
+	SlamTrack:GetMarkerReachedSignal('Fire'):Connect(function()
+    ShadowSlamvVFX()
+	DamagePlayers(
+		Vector3.new(16,8,16),
+		CFrame.new(),
+		30
+	)
+	
+	task.wait(1)
+
+	Attacking = false
+	M1OnCD = false
+	task.delay(ShadowSlamCooldown,function()
+		ShadowSlamOnCD = false
+	end)
+  end)
+end
+--teleport to players so they cannot run
+local function TeleportToPlayer(Target)
+
+	LastTeleport = tick()
+
+	local Position =
+		Target.HumanoidRootPart.Position
+
+	local RandomOffset = Vector3.new(math.random(-8,8),0,math.random(-8,8))
+
+	Root.CFrame = CFrame.new(Position + RandomOffset)
+	
+	task.wait(.15)
+
+	DashSlash(Target)
+end
+--basic m1 with air combos
+local function M1Attack(Target)
+
+	if M1OnCD then
+		return
+	end
+
+	local Direction = (Target.HumanoidRootPart.Position - Root.Position).Unit
+	local Facing = Root.CFrame.LookVector:Dot(Direction)
+
+	if Facing < 0.5 then
+		return
+	end
+
+	M1OnCD = true
+	Attacking = true
+
+	local CurrentTime = tick()
+
+	if CurrentTime - PrevTime >= 2 then
+		Animation = 1
+		Combo = 1
+	else
+		Animation += 1
+		Combo += 1
+
+		if Animation > #LoadedTracks then
+			Animation = 1
+		end
+	end
+
+	PrevTime = CurrentTime
+
+	for _, Track in ipairs(LoadedTracks) do
+		if Track.IsPlaying then
+			Track:Stop(0.05)
+		end
+	end
+
+	local Track = LoadedTracks[Animation]
+	if Track then
+		Track:Play()
+	end
+
+	task.wait(.15)
+
+	local SlashSFX = BossSFX.Slash:Clone()
+	SlashSFX.Parent = Root
+	SlashSFX:Play()
+
+	Debris:AddItem(SlashSFX,2)
+
+	local HitSomeone = false
+
+	local Overlap = OverlapParams.new()
+	Overlap.FilterType = Enum.RaycastFilterType.Exclude
+	Overlap.FilterDescendantsInstances = {Boss}
+
+	local Parts = workspace:GetPartBoundsInBox(
+
+		Root.CFrame * CFrame.new(0,0,-4),
+
+		Vector3.new(7,6,8),
+
+		Overlap
+
+	)
+
+	local HitCharacters = {}
+
+	for _,Part in ipairs(Parts) do
+
+		local Character =
+			Part:FindFirstAncestorOfClass("Model")
+
+		if Character
+			and not HitCharacters[Character]
+			and Players:GetPlayerFromCharacter(Character) then
+
+			HitCharacters[Character] = true
+			--I use this as my service to determine combat states
+
+			local Result = CombatService.Hit(
+
+				Boss,
+
+				Character,
+
+				6 + Combo,
+
+				{
+					BlockDamage = 6 + Combo,
+					CanBlockBreak = true
+				}
+
+			)
+
+			if Result == "Hit" then
+
+				HitSomeone = true
+
+				DamageIndicator.ShowDamage(Character,6 + Combo)
+
+				StunModule.Stun(Character,1.2)
+
+				if Boss:GetAttribute("Airborne") then
+
+					AirCombo += 1
+
+					CombatService.AirM1(
+						Boss,
+						Character,
+						AirCombo
+					)
+
+					if AirCombo >= MaxAirCombo then
+
+						AirCombo = 0
+
+						Boss:SetAttribute("DoingAirCombo",false)
+
+					end
+
+				else
+
+					if Animation >= 4 then
+
+						if math.random(1,100) <= 60 then
+
+							Boss:SetAttribute("DoingAirCombo",true)
+							Boss:SetAttribute('Airborne',true)
+
+
+							AirCombo = 0
+							Combo = 0
+							CombatService.Uptilt(
+								Boss,
+								Character
+							)
+
+						else
+
+							KnockbackModule.RagdollWithKnockback(
+
+								Root,
+								Character.Humanoid,
+								Character,
+								Character.HumanoidRootPart
+
+							)
+
+						end
+
+					end
+
+				end
+
+			elseif Result == "BlockBroken" then
+
+				DamageIndicator.ShowDamage(Character,6+Combo)
+
+				StunModule.Stun(Character,1.2)
+				
+				Boss:SetAttribute("DoingAirCombo",false)
+				AirCombo = 0
+
+			elseif Result == "PerfectBlocked" then
+               StunModule.PerfectBlocked(Boss)
+				Attacking = false
+				M1OnCD = false
+				Boss:SetAttribute("DoingAirCombo",false)
+				AirCombo = 0
+				return
+
+			end
+
+		end
+
+	end
+
+	if Combo >= MaxCombo then
+		task.wait(1.5)
+		Combo = 0
+		Animation = 0
+	else
+		task.wait(.1)
+	end
+
+	Attacking = false
+
+	task.delay(M1Cooldown,function()
+		M1OnCD = false
+	end)
+
+end
+
+--Trying to make the boss less robotic with randomizing actions
+local function RandomizeActions()
+
+	local Choices = {}
+
+	table.insert(Choices,{
+		Name = "M1",
+		Weight = 55
+	})
+
+	if not DashSlashOnCD then
+
+		table.insert(Choices,{
+			Name = "DashSlash",
+			Weight = 20
+		})
+
+	end
+
+	if not SpinSlashOnCD then
+
+		table.insert(Choices,{
+			Name = "SpinSlash",
+			Weight = 15
+		})
+
+	end
+
+	if not ShadowSlamOnCD then
+
+		table.insert(Choices,{
+			Name = "ShadowSlam",
+			Weight = 10
+		})
+
+	end
+	
+	if Boss:GetAttribute("Airborne") then
+
+		return "AirM1"
+
+	end
+
+	local Total = 0
+
+	for _,Choice in ipairs(Choices) do
+		Total += Choice.Weight
+	end
+
+	local Roll = math.random() * Total
+
+	local Current = 0
+
+	for _,Choice in ipairs(Choices) do
+
+		Current += Choice.Weight
+
+		if Roll <= Current then
+			return Choice.Name
+		end
+
+	end
+
+	return "M1"
+
+end
+
+--core loop
+while Humanoid.Health > 0 do
+
+	task.wait(0.1)
+
+	if Attacking
+		or Boss:GetAttribute("Disorientated")
+		or Boss:GetAttribute("Stunned") then
+
+		if WalkTrack.IsPlaying then
+			WalkTrack:Stop(.15)
+		end
+
+		continue
+	end
+	
+	local Target,Distance = GetClosestPlayer()
+
+
+	if Distance > AGGRO_RADIUS then
+
+		Aggroed = false
+
+		Humanoid:MoveTo(Root.Position)
+
+		if WalkTrack.IsPlaying then
+			WalkTrack:Stop(.15)
+		end
+
+		continue
+	end
+
+	if not Aggroed then
+
+		Aggroed = true
+
+		print("Igris has aggroed!")
+		-- I aint doin no cutscene gng
+	end
+
+	FaceTarget(Target, .2)
+	print(Target)
+
+	local TargetRoot = Target:FindFirstChild("HumanoidRootPart")
+	local TargetHumanoid = Target:FindFirstChild("Humanoid")
+
+	if not TargetRoot
+		or not TargetHumanoid
+		or TargetHumanoid.Health <= 0 then
+		continue
+	end
+
+	local Offset = Root.CFrame.RightVector * math.random(-4,4)
+
+	if not Attacking then
+		print('WALK')
+		Humanoid:MoveTo(TargetRoot.Position + Offset)
+		if not WalkTrack.IsPlaying then
+		WalkTrack:Play()
+		end
+	end
+
+	if Boss:GetAttribute("DoingAirCombo") then
+
+		M1Attack(Target)
+
+		task.wait(.2)
+
+		continue
+
+	end
+	-- Heres how the boss determines what moves to do after randomizing actions
+
+	if Distance <= 6 then
+
+		Humanoid:MoveTo(Root.Position)
+
+		if WalkTrack.IsPlaying then
+			WalkTrack:Stop(.15)
+		end
+
+		local Action = RandomizeActions()
+
+		if Action == "M1" then
+
+			M1Attack(Target)
+
+		elseif Action == "DashSlash" then
+
+			DashSlash(Target)
+
+		elseif Action == "SpinSlash" then
+
+			SpinningSlash(Target)
+
+		elseif Action == "ShadowSlam" then
+
+			ShadowSlam(Target)
+
+		end
+
+	elseif Distance <= 25 then
+
+		if not DashSlashOnCD then
+
+			DashSlash(Target)
+
+		else
+
+			Humanoid:MoveTo(TargetRoot.Position)
+
+		end
+
+	elseif Distance <= 40 then
+
+		Humanoid:MoveTo(TargetRoot.Position)
+
+	else
+
+		if tick() - LastTeleport > 6 then
+
+			TeleportToPlayer(Target)
+
+		else
+
+			Humanoid:MoveTo(TargetRoot.Position)
+
+		end
+
+	end
+
+end
+-- end of the code
