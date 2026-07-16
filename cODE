@@ -1,5 +1,6 @@
 --Connected Via Github
 --I apologize for all indentation of variables and functions, they make the code easier for me to handle and read
+--Sorry for sending so many applications just couldnt get the github thing down
 --Start Variables
 local Boss = script.Parent
 local Humanoid = Boss.Humanoid
